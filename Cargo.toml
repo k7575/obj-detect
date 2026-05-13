@@ -1,0 +1,9 @@
+[package]
+name = "obj-detect"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ndarray = "0.17.2"
+opencv = "0.98.2"
+ort = "2.0.0-rc.12"
