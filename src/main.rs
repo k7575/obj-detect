@@ -1,10 +1,11 @@
-use opencv::{core, imgcodecs, imgproc, prelude::*};
+use opencv::{core, dnn, imgcodecs, imgproc, prelude::*};
 use ort::{session::Session, value::Value};
 
 const MODEL_PATH: &str = "data/yolov8s.onnx";
 const INPUT_IMAGE: &str = "data/image.jpg";
 const OUTPUT_IMAGE: &str = "data/output.jpg";
 const CONF_THRESHOLD: f32 = 0.3;
+const NMS_THRESHOLD: f32 = 0.45;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut model = Session::builder()?.commit_from_file(MODEL_PATH)?;
@@ -46,16 +47,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output_value = &outputs[0];
     let (_shape, raw_data) = output_value.try_extract_tensor::<f32>()?;
 
-    let mut person_count = 0;
     let target_class_id = 0; // 0 — 'person'
+
+    let mut bboxes = core::Vector::<core::Rect>::new();
+    let mut scores = core::Vector::<f32>::new();
 
     for i in 0..8400 {
         let class_idx = (4 + target_class_id) * 8400 + i;
         let class_conf = raw_data[class_idx];
 
         if class_conf >= CONF_THRESHOLD {
-            person_count += 1;
-
             let cx = raw_data[0 * 8400 + i];
             let cy = raw_data[1 * 8400 + i];
             let w = raw_data[2 * 8400 + i];
@@ -66,33 +67,52 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let x2 = (((cx + w / 2.0) / 640.0) * img_width) as i32;
             let y2 = (((cy + h / 2.0) / 640.0) * img_height) as i32;
 
-            imgproc::rectangle(
-                &mut img,
-                core::Rect::new(x1, y1, x2 - x1, y2 - y1),
-                core::Scalar::new(0.0, 255.0, 0.0, 0.0),
-                2,
-                imgproc::LINE_8,
-                0,
-            )?;
-
-            let label_text = format!("person {:.2}", class_conf);
-            imgproc::put_text(
-                &mut img,
-                &label_text,
-                core::Point::new(x1, y1 - 10),
-                imgproc::FONT_HERSHEY_SIMPLEX,
-                0.7,
-                core::Scalar::new(0.0, 255.0, 0.0, 0.0),
-                2,
-                imgproc::LINE_8,
-                false,
-            )?;
+            let rect = core::Rect::new(x1, y1, x2 - x1, y2 - y1);
+            bboxes.push(rect);
+            scores.push(class_conf);
         }
+    }
+
+    let mut indices = core::Vector::<i32>::new();
+    dnn::nms_boxes(
+        &bboxes,
+        &scores,
+        CONF_THRESHOLD,
+        NMS_THRESHOLD,
+        &mut indices,
+        1.0,
+        0,
+    )?;
+
+    for idx in indices.iter() {
+        let rect = bboxes.get(idx as usize)?;
+        let conf = scores.get(idx as usize)?;
+
+        imgproc::rectangle(
+            &mut img,
+            rect,
+            core::Scalar::new(0.0, 255.0, 0.0, 0.0),
+            2,
+            imgproc::LINE_8,
+            0,
+        )?;
+
+        let label_text = format!("person {:.2}", conf);
+        imgproc::put_text(
+            &mut img,
+            &label_text,
+            core::Point::new(rect.x, rect.y - 10),
+            imgproc::FONT_HERSHEY_SIMPLEX,
+            0.7,
+            core::Scalar::new(0.0, 255.0, 0.0, 0.0),
+            2,
+            imgproc::LINE_8,
+            false,
+        )?;
     }
 
     let params = core::Vector::<i32>::new();
     imgcodecs::imwrite(OUTPUT_IMAGE, &img, &params)?;
-    println!("Found {} persons.", person_count);
-
+    println!("Found {} ", indices.len());
     Ok(())
 }
