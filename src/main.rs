@@ -1,16 +1,29 @@
+use clap::Parser;
 use opencv::{core, dnn, imgcodecs, imgproc, prelude::*};
 use ort::{session::Session, value::Value};
 
-const MODEL_PATH: &str = "data/yolov8s.onnx";
-const INPUT_IMAGE: &str = "data/image.jpg";
-const OUTPUT_IMAGE: &str = "data/output.jpg";
-const CONF_THRESHOLD: f32 = 0.3;
-const NMS_THRESHOLD: f32 = 0.45;
+#[derive(Parser, Debug)]
+struct Args {
+    #[arg(short, long)]
+    model_path: String,
+    #[arg(short, long)]
+    input_image: String,
+    #[arg(short, long)]
+    output_image: String,
+    #[arg(long, default_value_t = 0, help = "0..80 see documentation")]
+    class: usize,
+    #[arg(short, long, default_value_t = 0.3)]
+    conf_threshold: f32,
+    #[arg(long, default_value_t = 0.45)]
+    nms: f32,
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut model = Session::builder()?.commit_from_file(MODEL_PATH)?;
+    let args = Args::parse();
 
-    let mut img = imgcodecs::imread(INPUT_IMAGE, imgcodecs::IMREAD_COLOR)?;
+    let mut model = Session::builder()?.commit_from_file(args.model_path.as_str())?;
+
+    let mut img = imgcodecs::imread(args.input_image.as_str(), imgcodecs::IMREAD_COLOR)?;
     let img_width = img.cols() as f32;
     let img_height = img.rows() as f32;
 
@@ -47,7 +60,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output_value = &outputs[0];
     let (_shape, raw_data) = output_value.try_extract_tensor::<f32>()?;
 
-    let target_class_id = 0; // 0 — 'person'
+    let target_class_id = args.class;
 
     let mut bboxes = core::Vector::<core::Rect>::new();
     let mut scores = core::Vector::<f32>::new();
@@ -56,7 +69,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let class_idx = (4 + target_class_id) * 8400 + i;
         let class_conf = raw_data[class_idx];
 
-        if class_conf >= CONF_THRESHOLD {
+        if class_conf >= args.conf_threshold {
             let cx = raw_data[0 * 8400 + i];
             let cy = raw_data[1 * 8400 + i];
             let w = raw_data[2 * 8400 + i];
@@ -77,8 +90,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     dnn::nms_boxes(
         &bboxes,
         &scores,
-        CONF_THRESHOLD,
-        NMS_THRESHOLD,
+        args.conf_threshold,
+        args.nms,
         &mut indices,
         1.0,
         0,
@@ -112,7 +125,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let params = core::Vector::<i32>::new();
-    imgcodecs::imwrite(OUTPUT_IMAGE, &img, &params)?;
+    imgcodecs::imwrite(&args.output_image.as_str(), &img, &params)?;
     println!("Found {} ", indices.len());
     Ok(())
 }
