@@ -1,70 +1,57 @@
-# YOLOv8 Person Detector in Rust
+# YOLO ONNX Runtime Object Detector in Rust
 
-A lightweight command-line utility for detecting people in images using a YOLOv8 ONNX model. The application processes inputs through the ONNX Runtime (`ort`) and filters predictions using OpenCV's Non-Maximum Suppression (NMS).
+A lightweight Rust application that runs YOLO object detection using ONNX Runtime (`ort`) and OpenCV for image processing.
 
-## 🚀 Features
+## Features
 
-*   **YOLOv8 Inference**: Runs object detection directly from standard `.onnx` model files.
-*   **Duplicate Filtering**: Uses OpenCV's NMS algorithm to prevent overlapping bounding boxes on the same individual.
-*   **CLI Interface**: Configurable thresholds, model paths, and image paths via command-line arguments.
+* **ONNX Runtime:** High-performance inference via `ort` crate.
+* **OpenCV Integration:** Handles image resizing, color conversion, and drawing.
+* **CLI Interface:** Easy configuration using `clap`.
+* **NMS Filtering:** Built-in Non-Maximum Suppression via OpenCV DNN module.
 
-## 📋 Prerequisites
+## Dependencies
 
-Ensure your system has the required native C++ dependencies installed before compiling:
+Ensure your system has the required native libraries installed:
+* OpenCV 4.x
+* ONNX Runtime
 
-*   **OpenCV**: Version 4.x or higher.
-*   **ONNX Runtime**: Needed to link the `ort` crate.
-
-## 🛠️ Installation & Setup
-
-1. Add the following dependencies to your `Cargo.toml` file:
+Add these to your `Cargo.toml`:
 
 ```toml
 [dependencies]
 clap = { version = "4.0", features = ["derive"] }
-opencv = "0.93"
+opencv = "0.92"
 ort = "2.0"
 ```
 
-2. Download a standard YOLOv8 export model (e.g., `yolov8s.onnx`) and save it to your local environment.
+## Usage
 
-## 💻 Usage
-
-Run the program via `cargo run` while passing the required flags.
-
-### Basic command:
-```bash
-cargo run -- -m path/to/yolov8s.onnx -i path/to/input.jpg -o path/to/output.jpg
-```
-
-### Advanced configurations with thresholds:
 ```bash
 cargo run -- \
-  --model-path data/yolov8s.onnx \
-  --input-image data/scene.jpg \
-  --output-image data/result.jpg \
-  --conf-threshold 0.4 \
-  --nms 0.5
+  --model-path path/to/yolov8n.onnx \
+  --input-image input.jpg \
+  --output-image output.jpg \
+  --class 0 \
+  --conf-threshold 0.3 \
+  --nms 0.45
 ```
 
-### Argument Reference
+### CLI Arguments
 
+* `-m, --model-path <PATH>`: Path to the `.onnx` model file.
+* `-i, --input-image <PATH>`: Path to the input image.
+* `-o, --output-image <PATH>`: Path to save the processed image.
+* `--class <INT>`: Target COCO class ID to detect (e.g., `0` for person). Default: `0`.
+* `-c, --conf-threshold <FLOAT>`: Confidence threshold. Default: `0.3`.
+* `-n, --nms <FLOAT>`: Non-maximum suppression threshold. Default: `0.45`.
 
-| Long Flag | Short Flag | Default Value | Description |
-| :--- | :---: | :---: | :--- |
-| `--model-path` | `-m` | *Required* | Path to the exported `yolov8s.onnx` file |
-| `--input-image` | `-i` | *Required* | Path to the source image file (`.jpg`, `.png`) |
-| `--output-image` | `-o` | *Required* | Path where the annotated output image will be saved |
-| `--conf-threshold`| `-c` | `0.3` | Score threshold to filter out low-confidence objects |
-| `--nms` | - | `0.45` | Overlap threshold used by Non-Maximum Suppression |
+## How It Works
 
-## ⚙️ How It Works
-
-1. **CLI Parsing**: `clap::Parser` reads and validates arguments.
-2. **Preprocessing**: The target image is resized to `640x640` and transposed into a normalized NCHW `f32` tensor.
-3. **Inference**: The `ort` session feeds the input data into the model to extract raw bounding box predictions.
-4. **NMS Filtering**: Matches predicting the `person` class (index `0`) are sent to `opencv::dnn::nms_boxes` to prune duplicate overlaps.
-5. **Rendering**: Bounding boxes and confidence text scores are drawn on top of the original image layout.
+1. **Preprocessing:** Resizes input image to 640x640 and normalizes pixels to `[0.0, 1.0]` CHW format.
+2. **Inference:** Passes the tensor to ONNX Runtime.
+3. **Postprocessing:** Extracts bounding boxes for the selected class ID.
+4. **NMS:** Filters overlapping boxes.
+5. **Visualization:** Draws green bounding boxes and labels on the original image.
 
 ```
 const CLASSES: [&str; 80] = [
