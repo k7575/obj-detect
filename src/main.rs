@@ -110,7 +110,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             0,
         )?;
 
-        let label_text = format!("person {:.2}", conf);
+        let label_text = format!("object {:.2}", conf);
         imgproc::put_text(
             &mut img,
             &label_text,
@@ -122,6 +122,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             imgproc::LINE_8,
             false,
         )?;
+        println!(
+            "{}, X: {} Y: {},  Width: {} Height: {}",
+            label_text, rect.x, rect.y, rect.width, rect.height
+        );
     }
 
     let params = core::Vector::<i32>::new();
