@@ -44,7 +44,7 @@ cargo run -- \
 * `--class <INT>`: Target COCO class ID to detect (e.g., `0` for person). Default: `0`.
 * `-c, --conf-threshold <FLOAT>`: Confidence threshold. Default: `0.3`.
 * `-n, --nms <FLOAT>`: Non-maximum suppression threshold. Default: `0.45`.
-
+* `--camera <INT>`: Use Linux camera /dev/video*. Default: `-1`.
 ## How It Works
 
 1. **Preprocessing:** Resizes input image to 640x640 and normalizes pixels to `[0.0, 1.0]` CHW format.
