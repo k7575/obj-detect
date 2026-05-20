@@ -1,5 +1,5 @@
 use clap::Parser;
-use opencv::{core, dnn, imgcodecs, imgproc, prelude::*};
+use opencv::{core, dnn, imgcodecs, imgproc, prelude::*, videoio};
 use ort::{session::Session, value::Value};
 
 #[derive(Parser, Debug)]
@@ -16,6 +16,8 @@ struct Args {
     conf_threshold: f32,
     #[arg(long, default_value_t = 0.45)]
     nms: f32,
+    #[arg(long, default_value_t = -1)]
+    camera: isize,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -23,13 +25,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut model = Session::builder()?.commit_from_file(args.model_path.as_str())?;
 
-    let mut img = imgcodecs::imread(args.input_image.as_str(), imgcodecs::IMREAD_COLOR)?;
+    let mut img = Mat::default();
+    if args.camera >= 0 {
+        let mut cam = videoio::VideoCapture::new(0, videoio::CAP_ANY)?;
+
+        if !videoio::VideoCapture::is_opened(&cam)? {
+            println!("Error open cammera V4L");
+            std::process::exit(-1);
+        }
+
+        cam.read(&mut img)?;
+    } else {
+        img = imgcodecs::imread(args.input_image.as_str(), imgcodecs::IMREAD_COLOR)?;
+    }
+    detect(&mut img, &args, &mut model)?;
+    Ok(())
+}
+
+fn detect(
+    img: &mut Mat,
+    args: &Args,
+    model: &mut Session,
+) -> Result<(), Box<dyn std::error::Error>> {
     let img_width = img.cols() as f32;
     let img_height = img.rows() as f32;
 
     let mut resized = Mat::default();
     imgproc::resize(
-        &img,
+        img,
         &mut resized,
         core::Size::new(640, 640),
         0.0,
@@ -102,7 +125,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let conf = scores.get(idx as usize)?;
 
         imgproc::rectangle(
-            &mut img,
+            img,
             rect,
             core::Scalar::new(0.0, 255.0, 0.0, 0.0),
             2,
@@ -112,7 +135,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let label_text = format!("object {:.2}", conf);
         imgproc::put_text(
-            &mut img,
+            img,
             &label_text,
             core::Point::new(rect.x, rect.y - 10),
             imgproc::FONT_HERSHEY_SIMPLEX,
@@ -129,7 +152,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let params = core::Vector::<i32>::new();
-    imgcodecs::imwrite(&args.output_image.as_str(), &img, &params)?;
+    imgcodecs::imwrite(&args.output_image.as_str(), img, &params)?;
     println!("Found {} ", indices.len());
     Ok(())
 }
