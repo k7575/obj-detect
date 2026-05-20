@@ -8,3 +8,4 @@ clap = { version = "4.6.1", features = ["derive"] }
 ndarray = "0.17.2"
 opencv = "0.98.2"
 ort = "2.0.0-rc.12"
+rayon = "1.12.0"
