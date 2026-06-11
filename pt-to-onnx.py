@@ -1,4 +1,4 @@
 from ultralytics import YOLO
 
-model = YOLO("yolov8s.pt")
+model = YOLO("yolo26s.pt")
 model.export(format="onnx")
