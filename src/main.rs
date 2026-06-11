@@ -1,176 +1,268 @@
-use clap::Parser;
-use opencv::{core, dnn, imgcodecs, imgproc, prelude::*, videoio};
-use ort::{session::Session, value::Value};
-use rayon::prelude::*;
+use ab_glyph::{FontRef, PxScale};
+use clap::{Parser, Subcommand};
+use image::{Rgb, RgbImage, imageops::FilterType};
+use imageproc::drawing::{draw_hollow_rect_mut, draw_text_mut};
+use imageproc::rect::Rect;
+use ort::session::Session;
+use std::{path::Path, time::Duration};
+use v4l::{buffer::Type, io::traits::CaptureStream, prelude::*};
+
+const CLASSES: [&str; 80] = [
+    "person",
+    "bicycle",
+    "car",
+    "motorcycle",
+    "airplane",
+    "bus",
+    "train",
+    "truck",
+    "boat",
+    "traffic light",
+    "fire hydrant",
+    "stop sign",
+    "parking meter",
+    "bench",
+    "bird",
+    "cat",
+    "dog",
+    "horse",
+    "sheep",
+    "cow",
+    "elephant",
+    "bear",
+    "zebra",
+    "giraffe",
+    "backpack",
+    "umbrella",
+    "handbag",
+    "tie",
+    "suitcase",
+    "frisbee",
+    "skis",
+    "snowboard",
+    "sports ball",
+    "kite",
+    "baseball bat",
+    "baseball glove",
+    "skateboard",
+    "surfboard",
+    "tennis racket",
+    "bottle",
+    "wine glass",
+    "cup",
+    "fork",
+    "knife",
+    "spoon",
+    "bowl",
+    "banana",
+    "apple",
+    "sandwich",
+    "orange",
+    "broccoli",
+    "carrot",
+    "hot dog",
+    "pizza",
+    "donut",
+    "cake",
+    "chair",
+    "couch",
+    "potted plant",
+    "bed",
+    "dining table",
+    "toilet",
+    "tv",
+    "laptop",
+    "mouse",
+    "remote",
+    "keyboard",
+    "cell phone",
+    "microwave",
+    "oven",
+    "toaster",
+    "sink",
+    "refrigerator",
+    "book",
+    "clock",
+    "vase",
+    "scissors",
+    "teddy bear",
+    "hair drier",
+    "toothbrush",
+];
+
+pub fn detect_on_image(
+    mut original_img: RgbImage,
+    session: &mut Session,
+    font: &ab_glyph::FontRef,
+    scale: PxScale,
+) -> Result<RgbImage, Box<dyn std::error::Error>> {
+    let (img_w, img_h) = original_img.dimensions();
+
+    // YOLO 640x640
+    let resized_img = image::imageops::resize(&original_img, 640, 640, FilterType::Triangle);
+
+    let mut input_floats = vec![0.0f32; 1 * 3 * 640 * 640];
+
+    for y in 0..640 {
+        for x in 0..640 {
+            let pixel = resized_img.get_pixel(x as u32, y as u32);
+
+            let r_index = 0 * 640 * 640 + y * 640 + x;
+            let g_index = 1 * 640 * 640 + y * 640 + x;
+            let b_index = 2 * 640 * 640 + y * 640 + x;
+
+            input_floats[r_index] = pixel[0] as f32 / 255.0;
+            input_floats[g_index] = pixel[1] as f32 / 255.0;
+            input_floats[b_index] = pixel[2] as f32 / 255.0;
+        }
+    }
+
+    let input_value = ort::value::Value::from_array((vec![1, 3, 640, 640], input_floats))?;
+    let input_tensor = ort::inputs!["images" => input_value];
+    let outputs = session.run(input_tensor)?;
+
+    let output_name = "output0";
+    let output_view = outputs[output_name].try_extract_tensor::<f32>()?;
+    let output_data = output_view.1;
+
+    let scale_x = img_w as f32 / 640.0;
+    let scale_y = img_h as f32 / 640.0;
+
+    let green_color = Rgb([0, 255, 0]);
+
+    for chunk in output_data.chunks_exact(6) {
+        let score = chunk[4];
+
+        if score > 0.45 {
+            let x1 = (chunk[0] * scale_x) as i32;
+            let y1 = (chunk[1] * scale_y) as i32;
+            let x2 = (chunk[2] * scale_x) as i32;
+            let y2 = (chunk[3] * scale_y) as i32;
+            let class_id = chunk[5] as usize;
+
+            let width = (x2 - x1).max(1);
+            let height = (y2 - y1).max(1);
+
+            let rect = Rect::at(x1, y1).of_size(width as u32, height as u32);
+
+            draw_hollow_rect_mut(&mut original_img, rect, green_color);
+
+            let text = format!("{} ({:.2})", CLASSES[class_id], score);
+            draw_text_mut(
+                &mut original_img,
+                Rgb([255, 0, 0]), // Red color for text
+                x1,
+                y1 - 20, // Position text slightly above the bounding box
+                scale,
+                font,
+                &text,
+            );
+            println!(
+                "Detect class {} confidence {:.2} location [{}, {}, {}, {}]",
+                CLASSES[class_id], score, x1, y1, x2, y2
+            );
+        }
+    }
+
+    Ok(original_img)
+}
+
+pub fn run_detection(
+    image_path: &str,
+    model_path: &str,
+    output_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // initialize ONNX Runtime
+    let mut session = Session::builder()?.commit_from_file(model_path)?;
+    let original_img = image::open(Path::new(image_path))?.to_rgb8();
+
+    // Load a font
+    let font_data = include_bytes!("../LiberationSans-Regular.otf");
+    let font = FontRef::try_from_slice(font_data as &[u8]).expect("Error loading font");
+    let scale = PxScale::from(20.0);
+
+    let processed = detect_on_image(original_img, &mut session, &font, scale)?;
+    processed.save(output_path)?;
+    println!("Image save to: {}", output_path);
+
+    Ok(())
+}
 
 #[derive(Parser, Debug)]
-struct Args {
-    #[arg(short, long)]
-    model_path: String,
-    #[arg(short, long)]
-    input_image: String,
-    #[arg(short, long)]
-    output_image: String,
-    #[arg(long, default_value_t = 0, help = "0..80 see documentation")]
-    class: usize,
-    #[arg(short, long, default_value_t = 0.3)]
-    conf_threshold: f32,
-    #[arg(long, default_value_t = 0.45)]
-    nms: f32,
-    #[arg(long, default_value_t = -1)]
-    camera: isize,
+#[command(version, about, long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = Args::parse();
-
-    let mut model = Session::builder()?.commit_from_file(args.model_path.as_str())?;
-
-    let mut img = Mat::default();
-    if args.camera >= 0 {
-        let mut cam = videoio::VideoCapture::new(0, videoio::CAP_ANY)?;
-
-        if !videoio::VideoCapture::is_opened(&cam)? {
-            println!("Error open cammera V4L");
-            std::process::exit(-1);
-        }
-
-        cam.read(&mut img)?;
-    } else {
-        img = imgcodecs::imread(args.input_image.as_str(), imgcodecs::IMREAD_COLOR)?;
-    }
-    detect(&mut img, &args, &mut model)?;
-    Ok(())
+#[derive(Subcommand, Debug)]
+enum Commands {
+    Image {
+        #[arg(short, long)]
+        input: String,
+        #[arg(short, long)]
+        output: String,
+        #[arg(short, long, default_value = "data/yolo26s.onnx")]
+        model: String,
+    },
+    Camera {
+        #[arg(short, long, default_value = "/dev/video0")]
+        device: String,
+        #[arg(short, long, default_value = "640")]
+        width: u32,
+        #[arg(long, default_value = "480")]
+        height: u32,
+        #[arg(long, default_value = "data/yolo26s.onnx")]
+        model: String,
+    },
 }
 
-fn detect(
-    img: &mut Mat,
-    args: &Args,
-    model: &mut Session,
+fn run_camera(
+    device_path: &str,
+    _width: u32,
+    _height: u32,
+    model_path: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let img_width = img.cols() as f32;
-    let img_height = img.rows() as f32;
+    let dev = Device::with_path(device_path)?;
+    let mut stream = MmapStream::with_buffers(&dev, Type::VideoCapture, 3)?;
+    let mut session = Session::builder()?.commit_from_file(model_path)?;
+    let font_data = include_bytes!("../LiberationSans-Regular.otf");
+    let font = FontRef::try_from_slice(font_data as &[u8]).expect("Error loading font");
+    let scale = PxScale::from(20.0);
 
-    let mut resized = Mat::default();
-    imgproc::resize(
-        img,
-        &mut resized,
-        core::Size::new(640, 640),
-        0.0,
-        0.0,
-        imgproc::INTER_LINEAR,
-    )?;
+    println!("Starting camera loop...");
+    loop {
+        let (data, _) = stream.next()?;
+        // let img = RgbImage::from_raw(width, height, data.to_vec())
+        //     .ok_or("Failed to create image from buffer")?;
+        let img = image::load_from_memory_with_format(data, image::ImageFormat::Jpeg)?.to_rgb8();
 
-    let mut input_data = vec![0.0f32; 1 * 3 * 640 * 640];
-
-    let (r_slice, rest) = input_data.split_at_mut(640 * 640);
-    let (g_slice, b_slice) = rest.split_at_mut(640 * 640);
-
-    let r_chunks = r_slice.par_chunks_mut(640);
-    let g_chunks = g_slice.par_chunks_mut(640);
-    let b_chunks = b_slice.par_chunks_mut(640);
-
-    r_chunks
-        .zip(g_chunks)
-        .zip(b_chunks)
-        .enumerate()
-        .for_each(|(y, ((r_row, g_row), b_row))| {
-            if let Ok(row) = resized.at_row::<core::Vec3b>(y as i32) {
-                for x in 0..640 {
-                    let pixel = row[x];
-                    r_row[x] = pixel[2] as f32 / 255.0; // R
-                    g_row[x] = pixel[1] as f32 / 255.0; // G
-                    b_row[x] = pixel[0] as f32 / 255.0; // B
-                }
-            }
-        });
-
-    let input_tensor = Value::from_array(([1usize, 3, 640, 640], input_data))?;
-    let input_value = ort::session::SessionInputValue::from(&input_tensor);
-
-    let outputs = model.run([input_value])?;
-
-    let output_value = &outputs[0];
-    let (_shape, raw_data) = output_value.try_extract_tensor::<f32>()?;
-
-    let target_class_id = args.class;
-
-    let filtered_results: Vec<(core::Rect, f32)> = (0..8400)
-        .into_par_iter()
-        .filter_map(|i| {
-            let class_idx = (4 + target_class_id) * 8400 + i;
-            let class_conf = raw_data[class_idx];
-
-            if class_conf >= args.conf_threshold {
-                let cx = raw_data[0 * 8400 + i];
-                let cy = raw_data[1 * 8400 + i];
-                let w = raw_data[2 * 8400 + i];
-                let h = raw_data[3 * 8400 + i];
-
-                let x1 = (((cx - w / 2.0) / 640.0) * img_width) as i32;
-                let y1 = (((cy - h / 2.0) / 640.0) * img_height) as i32;
-                let x2 = (((cx + w / 2.0) / 640.0) * img_width) as i32;
-                let y2 = (((cy + h / 2.0) / 640.0) * img_height) as i32;
-
-                let rect = core::Rect::new(x1, y1, x2 - x1, y2 - y1);
-                Some((rect, class_conf))
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    let mut bboxes = core::Vector::<core::Rect>::new();
-    let mut scores = core::Vector::<f32>::new();
-    for (rect, conf) in filtered_results {
-        bboxes.push(rect);
-        scores.push(conf);
+        let _processed = detect_on_image(img, &mut session, &font, scale)?;
+        std::thread::sleep(Duration::from_millis(100));
     }
+}
 
-    let mut indices = core::Vector::<i32>::new();
-    dnn::nms_boxes(
-        &bboxes,
-        &scores,
-        args.conf_threshold,
-        args.nms,
-        &mut indices,
-        1.0,
-        0,
-    )?;
-
-    for idx in indices.iter() {
-        let rect = bboxes.get(idx as usize)?;
-        let conf = scores.get(idx as usize)?;
-
-        imgproc::rectangle(
-            img,
-            rect,
-            core::Scalar::new(0.0, 255.0, 0.0, 0.0),
-            2,
-            imgproc::LINE_8,
-            0,
-        )?;
-
-        let label_text = format!("object {:.2}", conf);
-        imgproc::put_text(
-            img,
-            &label_text,
-            core::Point::new(rect.x, rect.y - 10),
-            imgproc::FONT_HERSHEY_SIMPLEX,
-            0.7,
-            core::Scalar::new(0.0, 255.0, 0.0, 0.0),
-            2,
-            imgproc::LINE_8,
-            false,
-        )?;
-        println!(
-            "{}, X: {} Y: {},  Width: {} Height: {}",
-            label_text, rect.x, rect.y, rect.width, rect.height
-        );
+fn main() {
+    let cli = Cli::parse();
+    match cli.command {
+        Commands::Image {
+            input,
+            output,
+            model,
+        } => {
+            if let Err(e) = run_detection(&input, &model, &output) {
+                eprintln!("Error: {}", e);
+            }
+        }
+        Commands::Camera {
+            device,
+            width,
+            height,
+            model,
+        } => {
+            if let Err(e) = run_camera(&device, width, height, &model) {
+                eprintln!("Error: {}", e);
+            }
+        }
     }
-
-    let params = core::Vector::<i32>::new();
-    imgcodecs::imwrite(&args.output_image.as_str(), img, &params)?;
-    println!("Found {} ", indices.len());
-    Ok(())
 }

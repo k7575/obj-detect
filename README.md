@@ -1,68 +1,86 @@
 # YOLO ONNX Runtime Object Detector in Rust
 
-A lightweight Rust application that runs YOLO object detection using ONNX Runtime (`ort`) and OpenCV for image processing.
+A high-performance command-line application written in Rust for real-time object detection. It utilizes YOLO models (in ONNX format) powered by the `ort` (ONNX Runtime) engine. The application supports processing both static images and live video streams from webcams using `v4l` (Video4Linux).
 
 ## Features
 
-* **ONNX Runtime:** High-performance inference via `ort` crate.
-* **OpenCV Integration:** Handles image resizing, color conversion, and drawing.
-* **CLI Interface:** Easy configuration using `clap`.
-* **NMS Filtering:** Built-in Non-Maximum Suppression via OpenCV DNN module.
+* **Dual Modes**: Seamlessly switch between single image processing and live camera streaming.
+* **Hardware Accelerated**: Leverages ONNX Runtime via the `ort` crate for efficient model inference.
+* **Full Pipeline**: Handles automatic 640x640 resizing, channel normalization, and bounding box/text rendering.
+* **COCO Dataset Support**: Pre-configured to recognize 80 standard object classes (people, vehicles, animals, electronics, etc.).
+* **Robust CLI**: Built with `clap` for clean, type-safe command-line argument parsing.
 
-## Dependencies
+## Prerequisites
 
-Ensure your system has the required native libraries installed:
-* OpenCV 4.x
-* ONNX Runtime
+Before building the project, ensure your system has the following dependencies:
+1. **Rust Toolchain** (`cargo` and `rustc`)
+2. **ONNX Runtime System Libraries** (required by the `ort` crate)
+3. **V4L2 (Video4Linux) Development Headers** (required for webcam streaming on Linux)
+4. **Font File**: A TrueType/OpenType font file named `LiberationSans-Regular.otf` must be present in the parent directory relative to your project root (e.g., `../LiberationSans-Regular.otf`).
 
-Add these to your `Cargo.toml`:
+## Installation & Setup
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com
+   cd your-repo-name
+   ```
+
+2. **Prepare your model:**
+   Create a `data` directory and place your trained YOLO `.onnx` model inside it.
+   ```bash
+   mkdir -p data
+   # Copy your model here (default name expected is yolo26s.onnx)
+   ```
+
+3. **Build the project:**
+   ```bash
+   cargo build --release
+   ```
+
+## 💻 Usage
+
+The application provides two main subcommands: `image` and `camera`.
+
+### 1. Process a Static Image
+
+To detect objects in an image file and save the annotated output, run:
+
+```bash
+cargo run --release -- image --input path/to/input.jpg --output path/to/output.jpg
+```
+
+**Arguments for `image`:**
+* `-i`, `--input` *(Required)*: Path to the source image file.
+* `-o`, `--output` *(Required)*: Destination path where the processed image will be saved.
+* `-m`, `--model` *(Optional)*: Path to the ONNX model file. Defaults to `data/yolo26s.onnx`.
+
+---
+
+### 2. Stream from a Webcam (Linux)
+
+To run continuous detection on a live video stream and output real-time logs to the console, run:
+
+```bash
+cargo run --release -- camera --device /dev/video0
+```
+
+**Arguments for `camera`:**
+* `-d`, `--device` *(Optional)*: Path to the V4L camera device. Defaults to `/dev/video0`.
+* `-w`, `--width` *(Optional)*: Frame width configuration. Defaults to `640`.
+* `--height` *(Optional)*: Frame height configuration. Defaults to `480`.
+* `--model` *(Optional)*: Path to the ONNX model file. Defaults to `data/yolo26s.onnx`.
+
+## ⚙️ Dependencies
+
+Ensure your `Cargo.toml` includes the following external crates to support this codebase:
 
 ```toml
 [dependencies]
+ort = "2.0" # Adjust version based on your environment
+image = "0.24"
+imageproc = "0.23"
+ab_glyph = "0.2"
 clap = { version = "4.0", features = ["derive"] }
-opencv = "0.92"
-ort = "2.0"
-```
-
-## Usage
-
-```bash
-cargo run -- \
-  --model-path path/to/yolov8n.onnx \
-  --input-image input.jpg \
-  --output-image output.jpg \
-  --class 0 \
-  --conf-threshold 0.3 \
-  --nms 0.45
-```
-
-### CLI Arguments
-
-* `-m, --model-path <PATH>`: Path to the `.onnx` model file.
-* `-i, --input-image <PATH>`: Path to the input image.
-* `-o, --output-image <PATH>`: Path to save the processed image.
-* `--class <INT>`: Target COCO class ID to detect (e.g., `0` for person). Default: `0`.
-* `-c, --conf-threshold <FLOAT>`: Confidence threshold. Default: `0.3`.
-* `-n, --nms <FLOAT>`: Non-maximum suppression threshold. Default: `0.45`.
-* `--camera <INT>`: Use Linux camera /dev/video*. Default: `-1`.
-## How It Works
-
-1. **Preprocessing:** Resizes input image to 640x640 and normalizes pixels to `[0.0, 1.0]` CHW format.
-2. **Inference:** Passes the tensor to ONNX Runtime.
-3. **Postprocessing:** Extracts bounding boxes for the selected class ID.
-4. **NMS:** Filters overlapping boxes.
-5. **Visualization:** Draws green bounding boxes and labels on the original image.
-
-```
-const CLASSES: [&str; 80] = [
-    "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light",
-    "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow",
-    "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee",
-    "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove", "skateboard", "surfboard", "tennis racket", "bottle",
-    "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange",
-    "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", "couch", "potted plant", "bed",
-    "dining table", "toilet", "tv", "laptop", "mouse", "remote", "keyboard", "cell phone", "microwave", "oven",
-    "toaster", "sink", "refrigerator", "book", "clock", "vase", "scissors", "teddy bear", "hair drier", "toothbrush"
-];
-
+v4l = "0.14"
 ```
