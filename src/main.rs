@@ -1,10 +1,11 @@
 use ab_glyph::{FontRef, PxScale};
-use clap::Parser;
-use image::{Rgb, imageops::FilterType};
+use clap::{Parser, Subcommand};
+use image::{Rgb, RgbImage, imageops::FilterType};
 use imageproc::drawing::{draw_hollow_rect_mut, draw_text_mut};
 use imageproc::rect::Rect;
 use ort::session::Session;
-use std::path::Path;
+use std::{path::Path, time::Duration};
+use v4l::{buffer::Type, io::traits::CaptureStream, prelude::*};
 
 const CLASSES: [&str; 80] = [
     "person",
@@ -89,21 +90,13 @@ const CLASSES: [&str; 80] = [
     "toothbrush",
 ];
 
-pub fn run_detection(
-    image_path: &str,
-    model_path: &str,
-    output_path: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    // initialize ONNX Runtime
-    let mut session = Session::builder()?.commit_from_file(model_path)?;
-
-    let mut original_img = image::open(Path::new(image_path))?.to_rgb8();
+pub fn detect_on_image(
+    mut original_img: RgbImage,
+    session: &mut Session,
+    font: &ab_glyph::FontRef,
+    scale: PxScale,
+) -> Result<RgbImage, Box<dyn std::error::Error>> {
     let (img_w, img_h) = original_img.dimensions();
-
-    // Load a font
-    let font_data = include_bytes!("../LiberationSans-Regular.otf"); // You'll need to place this font file in the src directory
-    let font = FontRef::try_from_slice(font_data as &[u8]).expect("Error loading font");
-    let scale = PxScale::from(20.0);
 
     // YOLO 640x640
     let resized_img = image::imageops::resize(&original_img, 640, 640, FilterType::Triangle);
@@ -161,10 +154,9 @@ pub fn run_detection(
                 x1,
                 y1 - 20, // Position text slightly above the bounding box
                 scale,
-                &font,
+                font,
                 &text,
             );
-
             println!(
                 "Detect class {} confidence {:.2} location [{}, {}, {}, {}]",
                 CLASSES[class_id], score, x1, y1, x2, y2
@@ -172,7 +164,25 @@ pub fn run_detection(
         }
     }
 
-    original_img.save(output_path)?;
+    Ok(original_img)
+}
+
+pub fn run_detection(
+    image_path: &str,
+    model_path: &str,
+    output_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // initialize ONNX Runtime
+    let mut session = Session::builder()?.commit_from_file(model_path)?;
+    let original_img = image::open(Path::new(image_path))?.to_rgb8();
+
+    // Load a font
+    let font_data = include_bytes!("../LiberationSans-Regular.otf");
+    let font = FontRef::try_from_slice(font_data as &[u8]).expect("Error loading font");
+    let scale = PxScale::from(20.0);
+
+    let processed = detect_on_image(original_img, &mut session, &font, scale)?;
+    processed.save(output_path)?;
     println!("Image save to: {}", output_path);
 
     Ok(())
@@ -181,24 +191,78 @@ pub fn run_detection(
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Cli {
-    #[arg(short, long)]
-    input_image_path: String,
+    #[command(subcommand)]
+    command: Commands,
+}
 
-    #[arg(short, long)]
-    output_image_path: String,
+#[derive(Subcommand, Debug)]
+enum Commands {
+    Image {
+        #[arg(short, long)]
+        input: String,
+        #[arg(short, long)]
+        output: String,
+        #[arg(short, long, default_value = "data/yolo26s.onnx")]
+        model: String,
+    },
+    Camera {
+        #[arg(short, long, default_value = "/dev/video0")]
+        device: String,
+        #[arg(short, long, default_value = "640")]
+        width: u32,
+        #[arg(long, default_value = "480")]
+        height: u32,
+        #[arg(long, default_value = "data/yolo26s.onnx")]
+        model: String,
+    },
+}
 
-    #[arg(short, long, default_value = "data/yolo26s.onnx")]
-    model_path: String,
+fn run_camera(
+    device_path: &str,
+    _width: u32,
+    _height: u32,
+    model_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let dev = Device::with_path(device_path)?;
+    let mut stream = MmapStream::with_buffers(&dev, Type::VideoCapture, 3)?;
+    let mut session = Session::builder()?.commit_from_file(model_path)?;
+    let font_data = include_bytes!("../LiberationSans-Regular.otf");
+    let font = FontRef::try_from_slice(font_data as &[u8]).expect("Error loading font");
+    let scale = PxScale::from(20.0);
+
+    println!("Starting camera loop...");
+    loop {
+        let (data, _) = stream.next()?;
+        // let img = RgbImage::from_raw(width, height, data.to_vec())
+        //     .ok_or("Failed to create image from buffer")?;
+        let img = image::load_from_memory_with_format(data, image::ImageFormat::Jpeg)?.to_rgb8();
+
+        let _processed = detect_on_image(img, &mut session, &font, scale)?;
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 fn main() {
     let cli = Cli::parse();
-
-    if let Err(e) = run_detection(
-        &cli.input_image_path,
-        &cli.model_path,
-        &cli.output_image_path,
-    ) {
-        eprintln!("Error: {}", e);
+    match cli.command {
+        Commands::Image {
+            input,
+            output,
+            model,
+        } => {
+            if let Err(e) = run_detection(&input, &model, &output) {
+                eprintln!("Error: {}", e);
+            }
+        }
+        Commands::Camera {
+            device,
+            width,
+            height,
+            model,
+        } => {
+            if let Err(e) = run_camera(&device, width, height, &model) {
+                eprintln!("Error: {}", e);
+            }
+        }
     }
 }
