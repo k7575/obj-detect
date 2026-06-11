@@ -1,5 +1,7 @@
+use ab_glyph::{FontRef, PxScale};
+use clap::Parser;
 use image::{Rgb, imageops::FilterType};
-use imageproc::drawing::draw_hollow_rect_mut;
+use imageproc::drawing::{draw_hollow_rect_mut, draw_text_mut};
 use imageproc::rect::Rect;
 use ort::session::Session;
 use std::path::Path;
@@ -87,12 +89,21 @@ const CLASSES: [&str; 80] = [
     "toothbrush",
 ];
 
-pub fn run_detection(image_path: &str, model_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    // 1. initialize ONNX Runtime
+pub fn run_detection(
+    image_path: &str,
+    model_path: &str,
+    output_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // initialize ONNX Runtime
     let mut session = Session::builder()?.commit_from_file(model_path)?;
 
     let mut original_img = image::open(Path::new(image_path))?.to_rgb8();
     let (img_w, img_h) = original_img.dimensions();
+
+    // Load a font
+    let font_data = include_bytes!("../LiberationSans-Regular.otf"); // You'll need to place this font file in the src directory
+    let font = FontRef::try_from_slice(font_data as &[u8]).expect("Error loading font");
+    let scale = PxScale::from(20.0);
 
     // YOLO 640x640
     let resized_img = image::imageops::resize(&original_img, 640, 640, FilterType::Triangle);
@@ -143,6 +154,17 @@ pub fn run_detection(image_path: &str, model_path: &str) -> Result<(), Box<dyn s
 
             draw_hollow_rect_mut(&mut original_img, rect, green_color);
 
+            let text = format!("{} ({:.2})", CLASSES[class_id], score);
+            draw_text_mut(
+                &mut original_img,
+                Rgb([255, 0, 0]), // Red color for text
+                x1,
+                y1 - 20, // Position text slightly above the bounding box
+                scale,
+                &font,
+                &text,
+            );
+
             println!(
                 "Detect class {} confidence {:.2} location [{}, {}, {}, {}]",
                 CLASSES[class_id], score, x1, y1, x2, y2
@@ -150,15 +172,33 @@ pub fn run_detection(image_path: &str, model_path: &str) -> Result<(), Box<dyn s
         }
     }
 
-    let output_path = "output.jpg";
     original_img.save(output_path)?;
     println!("Image save to: {}", output_path);
 
     Ok(())
 }
 
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Cli {
+    #[arg(short, long)]
+    input_image_path: String,
+
+    #[arg(short, long)]
+    output_image_path: String,
+
+    #[arg(short, long, default_value = "data/yolo26s.onnx")]
+    model_path: String,
+}
+
 fn main() {
-    if let Err(e) = run_detection("input.jpg", "data/yolo26s.onnx") {
+    let cli = Cli::parse();
+
+    if let Err(e) = run_detection(
+        &cli.input_image_path,
+        &cli.model_path,
+        &cli.output_image_path,
+    ) {
         eprintln!("Error: {}", e);
     }
 }
